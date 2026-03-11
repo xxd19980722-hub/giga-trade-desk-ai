@@ -81,7 +81,7 @@ function App() {
     setError(null)
 
     try {
-      const response = await fetch('/api/report/platform', {
+      const response = await fetch('http://localhost:8787/api/report/platform', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
