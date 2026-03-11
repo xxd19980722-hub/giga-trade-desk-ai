@@ -319,6 +319,28 @@ th {
   border: 1px solid rgba(148, 163, 184, 0.12);
 }
 
+.intent-card {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.18);
+}
+
+.intent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.intent-grid span {
+  display: block;
+  color: #8ca0c4;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -410,6 +432,10 @@ th {
   }
 
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .intent-grid {
     grid-template-columns: 1fr;
   }
 }

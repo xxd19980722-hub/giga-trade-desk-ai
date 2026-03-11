@@ -36,6 +36,16 @@ type ReportResponse = {
   totals: Record<string, unknown>
 }
 
+type QueryIntent = {
+  matchedGroups: Group[]
+  dateRangeLabel: string
+  startDate: string
+  endDate: string
+  metrics: string[]
+  dimensionLabel: string
+  orderBy: string
+}
+
 const insights: Insight[] = [
   { title: 'A组 ROI1 更高', detail: 'A组近 7 天 ROI1 高于 B组，优势主要来自 Meta-日本流量。' },
   { title: 'B组素材结构分散', detail: 'B组头部素材贡献不足，长尾素材消耗更高，CPA 被拖累。' },
@@ -76,15 +86,90 @@ function getBackendBaseUrl() {
   return `http://${host}:8787`
 }
 
+function formatDate(date: Date) {
+  return date.toISOString().slice(0, 10)
+}
+
+function addDays(base: Date, offset: number) {
+  const next = new Date(base)
+  next.setDate(next.getDate() + offset)
+  return next
+}
+
+function inferIntent(text: string, groups: Group[]): QueryIntent {
+  const today = new Date()
+  const lower = text.toLowerCase()
+
+  let startDate = formatDate(today)
+  let endDate = formatDate(today)
+  let dateRangeLabel = '今天'
+
+  if (text.includes('最近7天') || text.includes('近7天') || lower.includes('last 7')) {
+    startDate = formatDate(addDays(today, -6))
+    endDate = formatDate(today)
+    dateRangeLabel = '最近 7 天'
+  } else if (text.includes('最近14天') || text.includes('近14天') || lower.includes('last 14')) {
+    startDate = formatDate(addDays(today, -13))
+    endDate = formatDate(today)
+    dateRangeLabel = '最近 14 天'
+  } else if (text.includes('昨天')) {
+    startDate = formatDate(addDays(today, -1))
+    endDate = formatDate(addDays(today, -1))
+    dateRangeLabel = '昨天'
+  }
+
+  const metricMap = [
+    { keyword: '消耗', metric: 'cost' },
+    { keyword: '点击', metric: 'click' },
+    { keyword: 'ctr', metric: 'ctr' },
+    { keyword: '新增', metric: 'new_user' },
+    { keyword: 'roi1', metric: 'roi1' },
+    { keyword: 'roi', metric: 'roi1' },
+    { keyword: '展示', metric: 'show' },
+  ]
+
+  const metrics = Array.from(
+    new Set(
+      metricMap
+        .filter((item) => lower.includes(item.keyword.toLowerCase()))
+        .map((item) => item.metric),
+    ),
+  )
+
+  const finalMetrics = metrics.length > 0 ? metrics : ['cost', 'click', 'ctr', 'new_user', 'roi1']
+
+  const matchedGroups = groups.filter((group) => text.includes(group.name))
+
+  let dimensionLabel = '平台/渠道'
+  if (text.includes('素材')) {
+    dimensionLabel = '素材（待接入）'
+  } else if (text.includes('广告')) {
+    dimensionLabel = '广告（待接入）'
+  }
+
+  const orderBy = finalMetrics.includes('cost') ? 'cost' : finalMetrics[0]
+
+  return {
+    matchedGroups,
+    dateRangeLabel,
+    startDate,
+    endDate,
+    metrics: finalMetrics,
+    dimensionLabel,
+    orderBy,
+  }
+}
+
 function App() {
   const [report, setReport] = useState<ReportResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [draft, setDraft] = useState('帮我继续下钻，看下素材维度 Top 20，并输出高消耗低转化素材。')
+  const [draft, setDraft] = useState('查询 A组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。')
   const [groups, setGroups] = useState<Group[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
   const [groupModalOpen, setGroupModalOpen] = useState(false)
   const [groupForm, setGroupForm] = useState(emptyGroupForm)
+  const [lastIntent, setLastIntent] = useState<QueryIntent | null>(null)
 
   const columns = useMemo(() => report?.columns ?? fallbackColumns, [report])
   const rows = useMemo(() => report?.rows ?? fallbackRows, [report])
@@ -107,7 +192,9 @@ function App() {
     }
   }
 
-  async function loadRealData() {
+  async function queryReport(intent?: QueryIntent) {
+    const currentIntent = intent ?? inferIntent(draft, groups)
+    setLastIntent(currentIntent)
     setLoading(true)
     setError(null)
 
@@ -122,13 +209,13 @@ function App() {
           body: {
             page: 1,
             page_size: 10,
-            start_date: '2026-03-11',
-            end_date: '2026-03-11',
-            order_by: 'cost',
+            start_date: currentIntent.startDate,
+            end_date: currentIntent.endDate,
+            order_by: currentIntent.orderBy,
             order_type: 'desc',
             dimension: 5,
             income_type: 2,
-            column_list: ['cost', 'click', 'ctr', 'new_user', 'roi1'],
+            column_list: currentIntent.metrics,
           },
         }),
       })
@@ -144,6 +231,11 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleSend() {
+    const intent = inferIntent(draft, groups)
+    void queryReport(intent)
   }
 
   function openCreateGroupModal() {
@@ -224,9 +316,9 @@ function App() {
 
       <section className="context-strip">
         <div className="context-card"><span>项目</span><strong>项目A</strong></div>
-        <div className="context-card"><span>时间范围</span><strong>2026-03-11</strong></div>
-        <div className="context-card"><span>维度</span><strong>平台/渠道</strong></div>
-        <div className="context-card"><span>指标</span><strong>消耗 / 点击 / CTR / 新增 / ROI1</strong></div>
+        <div className="context-card"><span>时间范围</span><strong>{lastIntent?.dateRangeLabel ?? '今天'}</strong></div>
+        <div className="context-card"><span>维度</span><strong>{lastIntent?.dimensionLabel ?? '平台/渠道'}</strong></div>
+        <div className="context-card"><span>指标</span><strong>{(lastIntent?.metrics ?? ['cost', 'click', 'ctr', 'new_user', 'roi1']).join(' / ')}</strong></div>
       </section>
 
       <main className="workspace-grid">
@@ -256,10 +348,10 @@ function App() {
           <div className="panel-section">
             <h3>常用分析</h3>
             <ul className="shortcut-list">
-              <li>最近 7 天组间总览</li>
-              <li>渠道表现差异</li>
-              <li>素材维度 Top 表现</li>
-              <li>高消耗低转化异常扫描</li>
+              <li>查询 A组 今天渠道表现</li>
+              <li>查询 B组 最近7天 渠道表现</li>
+              <li>查询 A组 最近14天 消耗、CTR、ROI1</li>
+              <li>查询 A组 和 B组 最近7天 表现</li>
             </ul>
           </div>
         </aside>
@@ -267,25 +359,35 @@ function App() {
         <section className="panel center-panel">
           <div className="panel-header">
             <h2>AI 对话</h2>
-            <span className="status">query-channel-report 已联调</span>
+            <span className="status">受控查询解释器已接入</span>
           </div>
 
           <div className="chat-thread">
-            <div className="message user">
-              比较 A组 和 B组 最近 7 天日本市场的渠道表现，重点看消耗、CTR、新增和 ROI1。
-            </div>
+            <div className="message user">{draft}</div>
             <div className="message assistant">
-              现在页面已经支持从当前访问主机自动请求 backend。对比组也支持新建、编辑和删除，第一版先以 advertiser_id 列表为核心对象。
+              现在输入框可以真实驱动查询。第一版会识别：组名、今天/昨天/最近7天/最近14天，以及消耗、点击、CTR、新增、ROI1 等常用指标。
             </div>
           </div>
+
+          {lastIntent ? (
+            <div className="intent-card">
+              <h3>本次解析结果</h3>
+              <div className="intent-grid">
+                <div><span>命中分组</span><strong>{lastIntent.matchedGroups.map((group) => group.name).join('、') || '未命中，默认全量'}</strong></div>
+                <div><span>时间范围</span><strong>{lastIntent.dateRangeLabel}</strong></div>
+                <div><span>查询维度</span><strong>{lastIntent.dimensionLabel}</strong></div>
+                <div><span>指标</span><strong>{lastIntent.metrics.join(', ')}</strong></div>
+              </div>
+            </div>
+          ) : null}
 
           <div className="plan-card">
             <h3>当前执行计划</h3>
             <ol>
-              <li>解析 A/B 组到账户 ID</li>
+              <li>识别输入中的组名、时间范围、指标</li>
+              <li>生成受控查询结构</li>
               <li>调用 query-channel-report 查询渠道报表</li>
-              <li>汇总组间指标差异</li>
-              <li>生成结论摘要</li>
+              <li>把结果渲染到右侧表格</li>
             </ol>
           </div>
 
@@ -293,15 +395,15 @@ function App() {
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="描述你想查询或分析的内容，比如：比较 A组 和 B组 最近 7 天日本市场的渠道表现，并找出高消耗低转化素材。"
+              placeholder="例如：查询 A组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。"
             />
             <div className="composer-toolbar">
               <div className="muted small-note">当前后端地址：{backendBaseUrl}</div>
               <div className="composer-actions">
-                <button className="ghost" onClick={loadRealData} disabled={loading}>
+                <button className="ghost" onClick={() => void queryReport()} disabled={loading}>
                   {loading ? '加载中...' : '加载真实数据'}
                 </button>
-                <button className="primary">发送</button>
+                <button className="primary" onClick={handleSend} disabled={loading}>发送</button>
               </div>
             </div>
           </div>
