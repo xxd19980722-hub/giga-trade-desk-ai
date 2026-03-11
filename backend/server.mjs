@@ -138,6 +138,45 @@ function normalizeAdvertiserIds(input) {
     .filter(Boolean)
 }
 
+function defaultReportBody() {
+  return {
+    page: 1,
+    page_size: 10,
+    start_date: '2026-03-11',
+    end_date: '2026-03-11',
+    order_by: 'cost',
+    order_type: 'desc',
+    dimension: 5,
+    income_type: 2,
+    column_list: ['cost', 'click', 'ctr', 'new_user', 'roi1'],
+  }
+}
+
+async function runPlatformReport(parsed) {
+  if (!process.env.AD_MANAGER_TOKEN) {
+    throw new Error('AD_MANAGER_TOKEN 未设置，请先在启动 backend 前 export。')
+  }
+
+  const body = parsed.body || defaultReportBody()
+  const endpoint = parsed.endpoint || 'platform'
+  const result = await invokeReportScript({ endpoint, body })
+  const data = result.data || {}
+  const metrics = body.column_list || ['cost', 'click', 'ctr', 'new_user', 'roi1']
+
+  return {
+    meta: {
+      endpoint,
+      body,
+      total: data.total ?? 0,
+      page: data.page ?? 1,
+    },
+    columns: buildColumns(metrics),
+    rows: normalizeRows(data.data_list || [], metrics),
+    totals: data.summary || {},
+    raw: result,
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -223,47 +262,57 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && req.url === '/api/report/platform') {
     try {
-      if (!process.env.AD_MANAGER_TOKEN) {
-        sendJson(res, 500, {
-          error: 'missing_token',
-          message: 'AD_MANAGER_TOKEN 未设置，请先在启动 backend 前 export。',
-        })
-        return
-      }
-
       const parsed = await parseRequestBody(req)
-      const body = parsed.body || {
-        page: 1,
-        page_size: 10,
-        start_date: '2026-03-11',
-        end_date: '2026-03-11',
-        order_by: 'cost',
-        order_type: 'desc',
-        dimension: 5,
-        income_type: 2,
-        column_list: ['cost', 'click', 'ctr', 'new_user', 'roi1'],
-      }
-
-      const endpoint = parsed.endpoint || 'platform'
-      const result = await invokeReportScript({ endpoint, body })
-      const data = result.data || {}
-      const metrics = body.column_list || ['cost', 'click', 'ctr', 'new_user', 'roi1']
-
-      sendJson(res, 200, {
-        meta: {
-          endpoint,
-          body,
-          total: data.total ?? 0,
-          page: data.page ?? 1,
-        },
-        columns: buildColumns(metrics),
-        rows: normalizeRows(data.data_list || [], metrics),
-        totals: data.summary || {},
-        raw: result,
-      })
+      const result = await runPlatformReport(parsed)
+      sendJson(res, 200, result)
     } catch (error) {
       sendJson(res, 500, {
         error: 'query_failed',
+        message: error.message,
+      })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && req.url === '/api/report/grouped') {
+    try {
+      const parsed = await parseRequestBody(req)
+      const groups = await readGroups()
+      const groupIds = Array.isArray(parsed.groupIds) ? parsed.groupIds : []
+      const targetGroups = groups.filter((group) => groupIds.includes(group.id))
+      const baseBody = parsed.body || defaultReportBody()
+
+      const results = []
+      for (const group of targetGroups) {
+        const report = await runPlatformReport({
+          endpoint: parsed.endpoint || 'platform',
+          body: {
+            ...baseBody,
+            account_id_list: group.advertiserIds,
+          },
+        })
+
+        results.push({
+          group: {
+            id: group.id,
+            name: group.name,
+            advertiserIds: group.advertiserIds,
+          },
+          report,
+          mappingNote: '当前版本将 advertiserIds 临时映射为 account_id_list 执行查询。',
+        })
+      }
+
+      sendJson(res, 200, {
+        grouped: results,
+        queryMeta: {
+          endpoint: parsed.endpoint || 'platform',
+          baseBody,
+        },
+      })
+    } catch (error) {
+      sendJson(res, 500, {
+        error: 'grouped_query_failed',
         message: error.message,
       })
     }

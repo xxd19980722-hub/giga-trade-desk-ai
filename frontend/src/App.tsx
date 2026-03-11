@@ -36,6 +36,16 @@ type ReportResponse = {
   totals: Record<string, unknown>
 }
 
+type GroupedReportItem = {
+  group: {
+    id: string
+    name: string
+    advertiserIds: string[]
+  }
+  report: ReportResponse
+  mappingNote?: string
+}
+
 type QueryIntent = {
   matchedGroups: Group[]
   dateRangeLabel: string
@@ -162,9 +172,10 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
 
 function App() {
   const [report, setReport] = useState<ReportResponse | null>(null)
+  const [groupedReports, setGroupedReports] = useState<GroupedReportItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [draft, setDraft] = useState('查询 A组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。')
+  const [draft, setDraft] = useState('查询 A组 和 B组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。')
   const [groups, setGroups] = useState<Group[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
   const [groupModalOpen, setGroupModalOpen] = useState(false)
@@ -199,6 +210,40 @@ function App() {
     setError(null)
 
     try {
+      if (currentIntent.matchedGroups.length > 0) {
+        const response = await fetch(`${backendBaseUrl}/api/report/grouped`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            endpoint: 'platform',
+            groupIds: currentIntent.matchedGroups.map((group) => group.id),
+            body: {
+              page: 1,
+              page_size: 10,
+              start_date: currentIntent.startDate,
+              end_date: currentIntent.endDate,
+              order_by: currentIntent.orderBy,
+              order_type: 'desc',
+              dimension: 5,
+              income_type: 2,
+              column_list: currentIntent.metrics,
+            },
+          }),
+        })
+
+        const json = await response.json()
+        if (!response.ok) {
+          throw new Error(json.message || '分组查询失败')
+        }
+
+        const items = (json.grouped ?? []) as GroupedReportItem[]
+        setGroupedReports(items)
+        setReport(items[0]?.report ?? null)
+        return
+      }
+
       const response = await fetch(`${backendBaseUrl}/api/report/platform`, {
         method: 'POST',
         headers: {
@@ -225,6 +270,7 @@ function App() {
         throw new Error(json.message || '查询失败')
       }
 
+      setGroupedReports([])
       setReport(json)
     } catch (err) {
       setError(err instanceof Error ? err.message : '未知错误')
@@ -359,13 +405,13 @@ function App() {
         <section className="panel center-panel">
           <div className="panel-header">
             <h2>AI 对话</h2>
-            <span className="status">受控查询解释器已接入</span>
+            <span className="status">分组多次查询已接入</span>
           </div>
 
           <div className="chat-thread">
             <div className="message user">{draft}</div>
             <div className="message assistant">
-              现在输入框可以真实驱动查询。第一版会识别：组名、今天/昨天/最近7天/最近14天，以及消耗、点击、CTR、新增、ROI1 等常用指标。
+              现在如果命中了多个组，会按组分别发起查询，然后在右侧按组展示结果。当前版本采用 advertiserIds → account_id_list 的临时桥接方式。
             </div>
           </div>
 
@@ -385,9 +431,9 @@ function App() {
             <h3>当前执行计划</h3>
             <ol>
               <li>识别输入中的组名、时间范围、指标</li>
-              <li>生成受控查询结构</li>
-              <li>调用 query-channel-report 查询渠道报表</li>
-              <li>把结果渲染到右侧表格</li>
+              <li>若命中多个组，则按组分别发起查询</li>
+              <li>将每个组的结果独立展示</li>
+              <li>后续再补真正的对比分析层</li>
             </ol>
           </div>
 
@@ -395,7 +441,7 @@ function App() {
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="例如：查询 A组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。"
+              placeholder="例如：查询 A组 和 B组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。"
             />
             <div className="composer-toolbar">
               <div className="muted small-note">当前后端地址：{backendBaseUrl}</div>
@@ -417,33 +463,73 @@ function App() {
             <button className="ghost small">导出</button>
           </div>
 
-          <div className="tabs">
-            <button className="tab active">表格</button>
-            <button className="tab">图表</button>
-            <button className="tab">差异</button>
-            <button className="tab">报告</button>
-          </div>
+          {groupedReports.length > 0 ? (
+            <div className="grouped-results">
+              {groupedReports.map((item) => (
+                <div className="group-result-card" key={item.group.id}>
+                  <div className="group-result-header">
+                    <div>
+                      <h3>{item.group.name}</h3>
+                      <div className="muted">{item.group.advertiserIds.length} 个 advertiser_id</div>
+                    </div>
+                  </div>
 
-          <div className="table-card">
-            <table>
-              <thead>
-                <tr>
-                  {columns.map((column) => (
-                    <th key={column.key}>{column.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row, index) => (
-                  <tr key={`${row.dimensionLabel}-${index}`}>
-                    {columns.map((column) => (
-                      <td key={column.key}>{formatCell(row[column.key])}</td>
+                  {item.mappingNote ? <div className="mapping-note">{item.mappingNote}</div> : null}
+
+                  <div className="table-card">
+                    <table>
+                      <thead>
+                        <tr>
+                          {item.report.columns.map((column) => (
+                            <th key={column.key}>{column.label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {item.report.rows.map((row, index) => (
+                          <tr key={`${item.group.id}-${row.dimensionLabel}-${index}`}>
+                            {item.report.columns.map((column) => (
+                              <td key={column.key}>{formatCell(row[column.key])}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="tabs">
+                <button className="tab active">表格</button>
+                <button className="tab">图表</button>
+                <button className="tab">差异</button>
+                <button className="tab">报告</button>
+              </div>
+
+              <div className="table-card">
+                <table>
+                  <thead>
+                    <tr>
+                      {columns.map((column) => (
+                        <th key={column.key}>{column.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, index) => (
+                      <tr key={`${row.dimensionLabel}-${index}`}>
+                        {columns.map((column) => (
+                          <td key={column.key}>{formatCell(row[column.key])}</td>
+                        ))}
+                      </tr>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
 
           {report ? (
             <div className="panel-section totals-card">
