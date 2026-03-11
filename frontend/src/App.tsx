@@ -577,7 +577,7 @@ function App() {
         ref={workspaceRef}
         className="workspace-grid resizable-grid"
         style={{
-          gridTemplateColumns: `${layout.left}px 8px minmax(420px, ${layout.center}px) 8px ${layout.right}px`,
+          gridTemplateColumns: `${layout.left}px 8px minmax(420px, ${layout.center}px) 8px minmax(${layout.right}px, 1fr)`,
         }}
       >
         <aside className="panel sidebar-left">
