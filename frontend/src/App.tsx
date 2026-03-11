@@ -82,6 +82,7 @@ type QueryIntent = {
   dimensionLabel: string
   orderBy: string
   analysisMode: 'report' | 'ad-anomalies'
+  hasExplicitDate: boolean
 }
 
 type MetricDef = {
@@ -95,6 +96,8 @@ type LayoutWidths = {
   center: number
   right: number
 }
+
+type DatePreset = 'today' | 'yesterday' | 'last7' | 'last14' | 'custom'
 
 const insights: Insight[] = [
   { title: 'A组 ROI1 更高', detail: 'A组近 7 天 ROI1 高于 B组，优势主要来自 Meta-日本流量。' },
@@ -234,19 +237,23 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
   let startDate = formatDate(today)
   let endDate = formatDate(today)
   let dateRangeLabel = '今天'
+  let hasExplicitDate = false
 
   if (text.includes('最近7天') || text.includes('近7天') || lower.includes('last 7')) {
     startDate = formatDate(addDays(today, -6))
     endDate = formatDate(today)
     dateRangeLabel = '最近 7 天'
+    hasExplicitDate = true
   } else if (text.includes('最近14天') || text.includes('近14天') || lower.includes('last 14')) {
     startDate = formatDate(addDays(today, -13))
     endDate = formatDate(today)
     dateRangeLabel = '最近 14 天'
+    hasExplicitDate = true
   } else if (text.includes('昨天')) {
     startDate = formatDate(addDays(today, -1))
     endDate = formatDate(addDays(today, -1))
     dateRangeLabel = '昨天'
+    hasExplicitDate = true
   }
 
   const { metricKeys, metricLabels } = inferMetrics(text)
@@ -275,7 +282,26 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
     dimensionLabel,
     orderBy,
     analysisMode,
+    hasExplicitDate,
   }
+}
+
+function getPresetDates(preset: DatePreset) {
+  const today = new Date()
+  if (preset === 'today') {
+    return { startDate: formatDate(today), endDate: formatDate(today), label: '今天' }
+  }
+  if (preset === 'yesterday') {
+    const yesterday = addDays(today, -1)
+    return { startDate: formatDate(yesterday), endDate: formatDate(yesterday), label: '昨天' }
+  }
+  if (preset === 'last7') {
+    return { startDate: formatDate(addDays(today, -6)), endDate: formatDate(today), label: '最近 7 天' }
+  }
+  if (preset === 'last14') {
+    return { startDate: formatDate(addDays(today, -13)), endDate: formatDate(today), label: '最近 14 天' }
+  }
+  return { startDate: formatDate(today), endDate: formatDate(today), label: '自定义' }
 }
 
 function loadSavedLayout(): LayoutWidths {
@@ -306,6 +332,8 @@ function App() {
   const [groupForm, setGroupForm] = useState(emptyGroupForm)
   const [lastIntent, setLastIntent] = useState<QueryIntent | null>(null)
   const [layout, setLayout] = useState<LayoutWidths>(() => loadSavedLayout())
+  const [datePreset, setDatePreset] = useState<DatePreset>('last7')
+  const [dateRange, setDateRange] = useState(() => getPresetDates('last7'))
   const workspaceRef = useRef<HTMLElement | null>(null)
 
   const columns = useMemo(() => report?.columns ?? fallbackColumns, [report])
@@ -373,8 +401,21 @@ function App() {
     }
   }
 
+  function applyDatePreset(preset: DatePreset) {
+    setDatePreset(preset)
+    setDateRange(getPresetDates(preset))
+  }
+
   async function queryReport(intent?: QueryIntent) {
-    const currentIntent = intent ?? inferIntent(draft, groups)
+    const inferredIntent = intent ?? inferIntent(draft, groups)
+    const currentIntent = inferredIntent.hasExplicitDate
+      ? inferredIntent
+      : {
+          ...inferredIntent,
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate,
+          dateRangeLabel: dateRange.label,
+        }
     setLastIntent(currentIntent)
     setLoading(true)
     setError(null)
@@ -568,7 +609,7 @@ function App() {
 
       <section className="context-strip">
         <div className="context-card"><span>项目</span><strong>项目A</strong></div>
-        <div className="context-card"><span>时间范围</span><strong>{lastIntent?.dateRangeLabel ?? '今天'}</strong></div>
+        <div className="context-card"><span>日期范围</span><strong>{lastIntent?.dateRangeLabel ?? dateRange.label}</strong></div>
         <div className="context-card"><span>维度</span><strong>{lastIntent?.dimensionLabel ?? '平台/渠道'}</strong></div>
         <div className="context-card"><span>指标</span><strong>{(lastIntent?.metricLabels ?? ['消耗', '点击', 'CTR', '新增', '首日ROI']).join(' / ')}</strong></div>
       </section>
@@ -641,6 +682,39 @@ function App() {
               </div>
             </div>
           ) : null}
+
+          <div className="date-filter-bar">
+            <div className="date-presets">
+              <button className={`ghost small ${datePreset === 'today' ? 'active-chip' : ''}`} onClick={() => applyDatePreset('today')}>今天</button>
+              <button className={`ghost small ${datePreset === 'yesterday' ? 'active-chip' : ''}`} onClick={() => applyDatePreset('yesterday')}>昨天</button>
+              <button className={`ghost small ${datePreset === 'last7' ? 'active-chip' : ''}`} onClick={() => applyDatePreset('last7')}>最近7天</button>
+              <button className={`ghost small ${datePreset === 'last14' ? 'active-chip' : ''}`} onClick={() => applyDatePreset('last14')}>最近14天</button>
+            </div>
+            <div className="date-inputs">
+              <label>
+                <span>开始</span>
+                <input
+                  type="date"
+                  value={dateRange.startDate}
+                  onChange={(event) => {
+                    setDatePreset('custom')
+                    setDateRange((current) => ({ ...current, startDate: event.target.value, label: '自定义' }))
+                  }}
+                />
+              </label>
+              <label>
+                <span>结束</span>
+                <input
+                  type="date"
+                  value={dateRange.endDate}
+                  onChange={(event) => {
+                    setDatePreset('custom')
+                    setDateRange((current) => ({ ...current, endDate: event.target.value, label: '自定义' }))
+                  }}
+                />
+              </label>
+            </div>
+          </div>
 
           <div className="plan-card">
             <h3>当前执行计划</h3>
