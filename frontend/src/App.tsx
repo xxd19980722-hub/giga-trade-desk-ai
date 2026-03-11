@@ -68,20 +68,27 @@ function formatCell(value: unknown) {
   return String(value)
 }
 
+function getBackendBaseUrl() {
+  const host = window.location.hostname || 'localhost'
+  return `http://${host}:8787`
+}
+
 function App() {
   const [report, setReport] = useState<ReportResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [draft, setDraft] = useState('帮我继续下钻，看下素材维度 Top 20，并输出高消耗低转化素材。')
 
   const columns = useMemo(() => report?.columns ?? fallbackColumns, [report])
   const rows = useMemo(() => report?.rows ?? fallbackRows, [report])
+  const backendBaseUrl = useMemo(() => getBackendBaseUrl(), [])
 
   async function loadRealData() {
     setLoading(true)
     setError(null)
 
     try {
-      const response = await fetch('http://localhost:8787/api/report/platform', {
+      const response = await fetch(`${backendBaseUrl}/api/report/platform`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -176,7 +183,7 @@ function App() {
               比较 A组 和 B组 最近 7 天日本市场的渠道表现，重点看消耗、CTR、新增和 ROI1。
             </div>
             <div className="message assistant">
-              现在前端已接入第一条真实查询链路。你可以点击“加载真实数据”验证 query-channel-report → ad-manager-api → 前端表格是否打通。
+              现在页面已经支持从当前访问主机自动请求 backend。你本机访问会打本机 8787；同事在局域网通过你的 IP 访问时，也会自动打到你这台机器的 8787。
             </div>
           </div>
 
@@ -190,12 +197,21 @@ function App() {
             </ol>
           </div>
 
-          <div className="composer actions-row">
-            <input value="帮我继续下钻，看下素材维度 Top 20" readOnly />
-            <button className="ghost" onClick={loadRealData} disabled={loading}>
-              {loading ? '加载中...' : '加载真实数据'}
-            </button>
-            <button className="primary">发送</button>
+          <div className="composer composer-large">
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="描述你想查询或分析的内容，比如：比较 A组 和 B组 最近 7 天日本市场的渠道表现，并找出高消耗低转化素材。"
+            />
+            <div className="composer-toolbar">
+              <div className="muted small-note">当前后端地址：{backendBaseUrl}</div>
+              <div className="composer-actions">
+                <button className="ghost" onClick={loadRealData} disabled={loading}>
+                  {loading ? '加载中...' : '加载真实数据'}
+                </button>
+                <button className="primary">发送</button>
+              </div>
+            </div>
           </div>
 
           {error ? <div className="error-banner">{error}</div> : null}

@@ -1,4 +1,4 @@
-# giga-trace-desk-ai
+# giga-trade-desk-ai
 
 一个面向广告赛马分析的 AI 工作台 MVP。
 
@@ -17,10 +17,9 @@
 - `frontend/`：前端工作台（React + Vite + TS）
 - `backend/`：本地 API 桥接层
 
-## 前端本地测试
+## 本地启动
 
 ### 1. 启动 backend
-需要先设置 token：
 
 ```bash
 export AD_MANAGER_TOKEN="你的 token"
@@ -29,7 +28,8 @@ npm run dev
 ```
 
 默认监听：
-- <http://localhost:8787>
+- `http://localhost:8787`
+- 同时监听 `0.0.0.0:8787`，可供局域网访问
 
 ### 2. 启动 frontend
 
@@ -39,15 +39,33 @@ npm install
 npm run dev
 ```
 
-默认地址：
-- <http://localhost:5173>
+默认监听：
+- `http://localhost:5173`
+- 同时监听 `0.0.0.0:5173`，可供局域网访问
 
-### 3. 在页面里测试
+## 局域网预览
+
+同事在同一局域网内时，可通过你的电脑局域网 IP 访问前端，例如：
+
+```text
+http://192.168.x.x:5173
+```
+
+页面会自动把 backend 请求发到同一台主机的 `8787` 端口，因此通常只需要：
+
+```text
+http://你的局域网IP:5173
+```
+
+> 注意：当前版本为了便于演示，未做 token 与权限收敛。仅建议在可信局域网中临时预览。
+
+## 页面内测试
+
 打开页面后，点击：
 - `加载真实数据`
 
 这会走通：
-- 前端 -> `/api/report/platform`
+- 前端 -> backend
 - backend -> `query-channel-report` 底层脚本
 - `ad-manager-api` -> 真实报表 API
 - 返回结果到前端表格

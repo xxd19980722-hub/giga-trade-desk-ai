@@ -159,6 +159,6 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: 'not_found' })
 })
 
-server.listen(8787, () => {
-  console.log('Backend listening on http://localhost:8787')
+server.listen(8787, '0.0.0.0', () => {
+  console.log('Backend listening on http://0.0.0.0:8787')
 })
