@@ -78,9 +78,16 @@ type QueryIntent = {
   startDate: string
   endDate: string
   metrics: string[]
+  metricLabels: string[]
   dimensionLabel: string
   orderBy: string
   analysisMode: 'report' | 'ad-anomalies'
+}
+
+type MetricDef = {
+  key: string
+  label: string
+  aliases: string[]
 }
 
 const insights: Insight[] = [
@@ -89,12 +96,57 @@ const insights: Insight[] = [
   { title: '可继续下钻素材维度', detail: '建议查看 CTR 前 20 素材与高消耗低转化素材。' },
 ]
 
+const metricRegistry: MetricDef[] = [
+  { key: 'cost', label: '消耗', aliases: ['消耗', '花费', '花费金额', 'cost'] },
+  { key: 'show', label: '展示', aliases: ['展示', '曝光', 'impression', 'show'] },
+  { key: 'click', label: '点击', aliases: ['点击', 'click'] },
+  { key: 'ctr', label: 'CTR', aliases: ['ctr', '点击率', '点击率ctr'] },
+  { key: 'cvr', label: 'CVR', aliases: ['cvr', '转化率'] },
+  { key: 'convert', label: '转化', aliases: ['转化', 'convert'] },
+  { key: 'active', label: '激活', aliases: ['激活', 'active'] },
+  { key: 'convert_cost', label: '转化成本', aliases: ['转化成本', 'convert cost'] },
+  { key: 'active_cost', label: '激活成本', aliases: ['激活成本', 'active cost'] },
+  { key: 'cost_by_thousand_show', label: '千次展示成本', aliases: ['cpm', '千展', '千次展示成本'] },
+  { key: 'new_user', label: '新增', aliases: ['新增', '新增用户', '新用户', '新增设备', 'new user'] },
+  { key: 'new_paid_user', label: '新增付费用户', aliases: ['新增付费', '新增付费用户', '新付费用户'] },
+  { key: 'new_paid_rate', label: '新增付费率', aliases: ['新增付费率', '付费率'] },
+  { key: 'new_user_cost', label: '新增成本', aliases: ['新增成本', '单新增成本', 'new user cost'] },
+  { key: 'new_paid_user_cost', label: '新增付费成本', aliases: ['新增付费成本', '新付费成本', 'new paid user cost'] },
+  { key: 'new_user_ad_trace', label: '再归因新增', aliases: ['再归因新增', '归因新增'] },
+  { key: 'advertiser_dau', label: 'DAU', aliases: ['dau', '日活', '日活跃用户'] },
+  { key: 'advertiser_paid_dau', label: '付费DAU', aliases: ['付费dau', '内购付费人数'] },
+  { key: 'pay1', label: '首日付费', aliases: ['首日付费', 'day1付费', 'pay1'] },
+  { key: 'pay3', label: '3日付费', aliases: ['3日付费', 'pay3'] },
+  { key: 'pay7', label: '7日付费', aliases: ['7日付费', 'pay7'] },
+  { key: 'pay30', label: '30日付费', aliases: ['30日付费', 'pay30'] },
+  { key: 'total_pay', label: '累计付费', aliases: ['累计付费', '总付费', 'total pay'] },
+  { key: 'arppu_1', label: '首日ARPPU', aliases: ['arppu', '首日arppu'] },
+  { key: 'advertiser_recharge', label: '内购流水', aliases: ['内购流水', '充值流水'] },
+  { key: 'income', label: '广告收入', aliases: ['广告收入', '收入', 'income'] },
+  { key: 'ltv1', label: '首日LTV', aliases: ['首日ltv', 'ltv1'] },
+  { key: 'ltv7', label: '7日LTV', aliases: ['7日ltv', 'ltv7'] },
+  { key: 'total_ltv', label: '累计LTV', aliases: ['累计ltv', '总ltv', 'total ltv'] },
+  { key: 'roi1', label: '首日ROI', aliases: ['首日roi', 'roi1', 'roi'] },
+  { key: 'roi3', label: '3日ROI', aliases: ['3日roi', 'roi3'] },
+  { key: 'roi7', label: '7日ROI', aliases: ['7日roi', 'roi7'] },
+  { key: 'roi30', label: '30日ROI', aliases: ['30日roi', 'roi30'] },
+  { key: 'total_roi', label: '累计ROI', aliases: ['累计roi', '总roi', '累计回报率', '总回报率', 'total roi'] },
+  { key: 'stay2', label: '次留', aliases: ['次留', '2日留存', 'stay2'] },
+  { key: 'stay7', label: '7日留存', aliases: ['7日留存', 'stay7'] },
+  { key: 'stay30', label: '30日留存', aliases: ['30日留存', 'stay30'] },
+  { key: 'stay_num2', label: '次留人数', aliases: ['次留人数', '2日留存人数'] },
+  { key: 'pay2_stay_rate', label: '2日付费留存率', aliases: ['2日付费留存', 'pay2留存'] },
+  { key: 'pay7_stay_rate', label: '7日付费留存率', aliases: ['7日付费留存', 'pay7留存'] },
+  { key: 'times3', label: '3日活跃天数', aliases: ['3日活跃天数', 'times3'] },
+  { key: 'times7', label: '7日活跃天数', aliases: ['7日活跃天数', 'times7'] },
+]
+
 const fallbackColumns: ReportColumn[] = [
   { key: 'dimensionLabel', label: '维度' },
   { key: 'cost', label: '消耗' },
   { key: 'ctr', label: 'CTR' },
   { key: 'new_user', label: '新增' },
-  { key: 'roi1', label: 'ROI1' },
+  { key: 'roi1', label: '首日ROI' },
 ]
 
 const fallbackRows: ReportRow[] = [
@@ -113,7 +165,7 @@ const emptyGroupForm = {
 function formatCell(value: unknown) {
   if (value === null || value === undefined || value === '') return '-'
   if (typeof value === 'number') {
-    return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 })
   }
   return String(value)
 }
@@ -146,6 +198,23 @@ function anomalyTypeLabel(type: string) {
   }
 }
 
+function inferMetrics(text: string) {
+  const lower = text.toLowerCase()
+  const matches = metricRegistry.filter((metric) =>
+    metric.aliases.some((alias) => lower.includes(alias.toLowerCase())),
+  )
+
+  const uniqueMatches = Array.from(new Map(matches.map((metric) => [metric.key, metric])).values())
+  const finalMatches = uniqueMatches.length > 0
+    ? uniqueMatches
+    : metricRegistry.filter((metric) => ['cost', 'click', 'ctr', 'new_user', 'roi1'].includes(metric.key))
+
+  return {
+    metricKeys: finalMatches.map((metric) => metric.key),
+    metricLabels: finalMatches.map((metric) => metric.label),
+  }
+}
+
 function inferIntent(text: string, groups: Group[]): QueryIntent {
   const today = new Date()
   const lower = text.toLowerCase()
@@ -168,26 +237,7 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
     dateRangeLabel = '昨天'
   }
 
-  const metricMap = [
-    { keyword: '消耗', metric: 'cost' },
-    { keyword: '点击', metric: 'click' },
-    { keyword: 'ctr', metric: 'ctr' },
-    { keyword: '新增', metric: 'new_user' },
-    { keyword: 'roi1', metric: 'roi1' },
-    { keyword: 'roi', metric: 'roi1' },
-    { keyword: '展示', metric: 'show' },
-  ]
-
-  const metrics = Array.from(
-    new Set(
-      metricMap
-        .filter((item) => lower.includes(item.keyword.toLowerCase()))
-        .map((item) => item.metric),
-    ),
-  )
-
-  const finalMetrics = metrics.length > 0 ? metrics : ['cost', 'click', 'ctr', 'new_user', 'roi1']
-
+  const { metricKeys, metricLabels } = inferMetrics(text)
   const matchedGroups = groups.filter((group) => text.includes(group.name))
 
   let dimensionLabel = '平台/渠道'
@@ -201,14 +251,15 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
     dimensionLabel = '广告维度'
   }
 
-  const orderBy = finalMetrics.includes('cost') ? 'cost' : finalMetrics[0]
+  const orderBy = metricKeys.includes('cost') ? 'cost' : metricKeys[0]
 
   return {
     matchedGroups,
     dateRangeLabel,
     startDate,
     endDate,
-    metrics: finalMetrics,
+    metrics: metricKeys,
+    metricLabels,
     dimensionLabel,
     orderBy,
     analysisMode,
@@ -221,7 +272,7 @@ function App() {
   const [groupedAnomalies, setGroupedAnomalies] = useState<GroupedAnomalyItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [draft, setDraft] = useState('观察 A组 和 B组 最近7天 广告是否有异常，比如高消耗低回报或高点击低新增。')
+  const [draft, setDraft] = useState('对比 A组、B组、C组 的数据，主要关注消耗、新增成本、新增付费成本、首日ROI、累计ROI。')
   const [groups, setGroups] = useState<Group[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
   const [groupModalOpen, setGroupModalOpen] = useState(false)
@@ -446,7 +497,7 @@ function App() {
         <div className="context-card"><span>项目</span><strong>项目A</strong></div>
         <div className="context-card"><span>时间范围</span><strong>{lastIntent?.dateRangeLabel ?? '今天'}</strong></div>
         <div className="context-card"><span>维度</span><strong>{lastIntent?.dimensionLabel ?? '平台/渠道'}</strong></div>
-        <div className="context-card"><span>指标</span><strong>{(lastIntent?.metrics ?? ['cost', 'click', 'ctr', 'new_user', 'roi1']).join(' / ')}</strong></div>
+        <div className="context-card"><span>指标</span><strong>{(lastIntent?.metricLabels ?? ['消耗', '点击', 'CTR', '新增', '首日ROI']).join(' / ')}</strong></div>
       </section>
 
       <main className="workspace-grid">
@@ -476,10 +527,10 @@ function App() {
           <div className="panel-section">
             <h3>常用分析</h3>
             <ul className="shortcut-list">
+              <li>对比 A组、B组、C组 的数据，主要关注消耗、新增成本、新增付费成本、首日ROI、累计ROI</li>
               <li>观察 A组 和 B组 最近7天 广告是否有异常</li>
               <li>查询 A组 今天渠道表现</li>
               <li>查询 B组 最近7天 渠道表现</li>
-              <li>查询 A组 和 B组 最近7天 表现</li>
             </ul>
           </div>
         </aside>
@@ -487,13 +538,13 @@ function App() {
         <section className="panel center-panel">
           <div className="panel-header">
             <h2>AI 对话</h2>
-            <span className="status">广告异常扫描已接入</span>
+            <span className="status">全量指标词典已接入</span>
           </div>
 
           <div className="chat-thread">
             <div className="message user">{draft}</div>
             <div className="message assistant">
-              现在已经支持广告异常扫描。若命中多个组，会按组分别查询广告维度，并识别高消耗低回报、高点击低新增、低消耗高潜力三类异常。
+              现在不再只限于少量写死指标，而是接入了一版更完整的指标词典。像新增成本、新增付费成本、首日ROI、累计ROI、首日付费、付费率、留存等关键词都能识别。
             </div>
           </div>
 
@@ -505,6 +556,7 @@ function App() {
                 <div><span>时间范围</span><strong>{lastIntent.dateRangeLabel}</strong></div>
                 <div><span>查询维度</span><strong>{lastIntent.dimensionLabel}</strong></div>
                 <div><span>模式</span><strong>{lastIntent.analysisMode === 'ad-anomalies' ? '广告异常扫描' : '报表查询'}</strong></div>
+                <div className="full-span"><span>识别指标</span><strong>{lastIntent.metricLabels.join('、')}</strong></div>
               </div>
             </div>
           ) : null}
@@ -513,9 +565,9 @@ function App() {
             <h3>当前执行计划</h3>
             <ol>
               <li>识别输入中的组名、时间范围、指标和分析模式</li>
-              <li>若是广告异常扫描，则按组查询广告维度</li>
-              <li>对每组广告做规则型异常识别</li>
-              <li>将异常广告列表展示到右侧</li>
+              <li>从统一指标词典中匹配字段</li>
+              <li>拼装真实查询参数</li>
+              <li>展示查询或广告异常扫描结果</li>
             </ol>
           </div>
 
@@ -523,7 +575,7 @@ function App() {
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="例如：观察 A组 和 B组 最近7天 广告是否有异常，比如高消耗低回报或高点击低新增。"
+              placeholder="例如：对比 A组、B组、C组 的数据，主要关注消耗、新增成本、新增付费成本、首日ROI、累计ROI。"
             />
             <div className="composer-toolbar">
               <div className="muted small-note">当前后端地址：{backendBaseUrl}</div>
