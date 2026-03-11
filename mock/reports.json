@@ -1,0 +1,7 @@
+{
+  "query": {
+    "breakdown": "channel",
+    "metrics": ["spend", "ctr", "cpa"]
+  },
+  "rows": []
+}
