@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 type Group = {
   id: string
@@ -90,6 +90,12 @@ type MetricDef = {
   aliases: string[]
 }
 
+type LayoutWidths = {
+  left: number
+  center: number
+  right: number
+}
+
 const insights: Insight[] = [
   { title: 'A组 ROI1 更高', detail: 'A组近 7 天 ROI1 高于 B组，优势主要来自 Meta-日本流量。' },
   { title: 'B组素材结构分散', detail: 'B组头部素材贡献不足，长尾素材消耗更高，CPA 被拖累。' },
@@ -160,6 +166,12 @@ const emptyGroupForm = {
   name: '',
   note: '',
   advertiserIdsText: '',
+}
+
+const defaultLayout: LayoutWidths = {
+  left: 280,
+  center: 560,
+  right: 420,
 }
 
 function formatCell(value: unknown) {
@@ -266,6 +278,21 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
   }
 }
 
+function loadSavedLayout(): LayoutWidths {
+  try {
+    const raw = localStorage.getItem('gtdai-layout-widths')
+    if (!raw) return defaultLayout
+    const parsed = JSON.parse(raw) as Partial<LayoutWidths>
+    return {
+      left: parsed.left ?? defaultLayout.left,
+      center: parsed.center ?? defaultLayout.center,
+      right: parsed.right ?? defaultLayout.right,
+    }
+  } catch {
+    return defaultLayout
+  }
+}
+
 function App() {
   const [report, setReport] = useState<ReportResponse | null>(null)
   const [groupedReports, setGroupedReports] = useState<GroupedReportItem[]>([])
@@ -278,6 +305,8 @@ function App() {
   const [groupModalOpen, setGroupModalOpen] = useState(false)
   const [groupForm, setGroupForm] = useState(emptyGroupForm)
   const [lastIntent, setLastIntent] = useState<QueryIntent | null>(null)
+  const [layout, setLayout] = useState<LayoutWidths>(() => loadSavedLayout())
+  const workspaceRef = useRef<HTMLElement | null>(null)
 
   const columns = useMemo(() => report?.columns ?? fallbackColumns, [report])
   const rows = useMemo(() => report?.rows ?? fallbackRows, [report])
@@ -286,6 +315,50 @@ function App() {
   useEffect(() => {
     void loadGroups()
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem('gtdai-layout-widths', JSON.stringify(layout))
+  }, [layout])
+
+  function startResize(handle: 'left' | 'right', event: React.PointerEvent<HTMLDivElement>) {
+    if (window.innerWidth <= 1280) return
+    const startX = event.clientX
+    const startLayout = { ...layout }
+    const minLeft = 220
+    const minCenter = 420
+    const minRight = 320
+
+    const move = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - startX
+      setLayout(() => {
+        if (handle === 'left') {
+          const nextLeft = Math.max(minLeft, startLayout.left + delta)
+          const nextCenter = Math.max(minCenter, startLayout.center - (nextLeft - startLayout.left))
+          return {
+            left: nextLeft,
+            center: nextCenter,
+            right: startLayout.right,
+          }
+        }
+
+        const nextCenter = Math.max(minCenter, startLayout.center + delta)
+        const nextRight = Math.max(minRight, startLayout.right - (nextCenter - startLayout.center))
+        return {
+          left: startLayout.left,
+          center: nextCenter,
+          right: nextRight,
+        }
+      })
+    }
+
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
 
   async function loadGroups() {
     setGroupsLoading(true)
@@ -500,7 +573,13 @@ function App() {
         <div className="context-card"><span>指标</span><strong>{(lastIntent?.metricLabels ?? ['消耗', '点击', 'CTR', '新增', '首日ROI']).join(' / ')}</strong></div>
       </section>
 
-      <main className="workspace-grid">
+      <main
+        ref={workspaceRef}
+        className="workspace-grid resizable-grid"
+        style={{
+          gridTemplateColumns: `${layout.left}px 8px minmax(420px, ${layout.center}px) 8px ${layout.right}px`,
+        }}
+      >
         <aside className="panel sidebar-left">
           <div className="panel-header">
             <h2>对比组</h2>
@@ -534,6 +613,8 @@ function App() {
             </ul>
           </div>
         </aside>
+
+        <div className="resize-handle" onPointerDown={(event) => startResize('left', event)} />
 
         <section className="panel center-panel">
           <div className="panel-header">
@@ -590,6 +671,8 @@ function App() {
 
           {error ? <div className="error-banner">{error}</div> : null}
         </section>
+
+        <div className="resize-handle" onPointerDown={(event) => startResize('right', event)} />
 
         <aside className="panel sidebar-right">
           <div className="panel-header">
