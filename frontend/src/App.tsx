@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 type Group = {
   id: string
   name: string
-  type: 'manual' | 'rule' | 'hybrid'
-  accounts: number
+  advertiserIds: string[]
   note: string
+  createdAt: string
+  updatedAt: string
 }
 
 type Insight = {
@@ -35,11 +36,6 @@ type ReportResponse = {
   totals: Record<string, unknown>
 }
 
-const groups: Group[] = [
-  { id: 'grp-a', name: 'A组', type: 'rule', accounts: 18, note: '日本 / Meta / 项目A' },
-  { id: 'grp-b', name: 'B组', type: 'hybrid', accounts: 22, note: '日本 / 广点通 / 项目A + 手工调整' },
-]
-
 const insights: Insight[] = [
   { title: 'A组 ROI1 更高', detail: 'A组近 7 天 ROI1 高于 B组，优势主要来自 Meta-日本流量。' },
   { title: 'B组素材结构分散', detail: 'B组头部素材贡献不足，长尾素材消耗更高，CPA 被拖累。' },
@@ -60,6 +56,13 @@ const fallbackRows: ReportRow[] = [
   { dimensionLabel: '快手', cost: '420,000', ctr: '3.21%', new_user: '2,140', roi1: '1.08' },
 ]
 
+const emptyGroupForm = {
+  id: '',
+  name: '',
+  note: '',
+  advertiserIdsText: '',
+}
+
 function formatCell(value: unknown) {
   if (value === null || value === undefined || value === '') return '-'
   if (typeof value === 'number') {
@@ -78,10 +81,31 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState('帮我继续下钻，看下素材维度 Top 20，并输出高消耗低转化素材。')
+  const [groups, setGroups] = useState<Group[]>([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [groupModalOpen, setGroupModalOpen] = useState(false)
+  const [groupForm, setGroupForm] = useState(emptyGroupForm)
 
   const columns = useMemo(() => report?.columns ?? fallbackColumns, [report])
   const rows = useMemo(() => report?.rows ?? fallbackRows, [report])
   const backendBaseUrl = useMemo(() => getBackendBaseUrl(), [])
+
+  useEffect(() => {
+    void loadGroups()
+  }, [])
+
+  async function loadGroups() {
+    setGroupsLoading(true)
+    try {
+      const response = await fetch(`${backendBaseUrl}/api/groups`)
+      const json = await response.json()
+      setGroups(json.groups ?? [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载分组失败')
+    } finally {
+      setGroupsLoading(false)
+    }
+  }
 
   async function loadRealData() {
     setLoading(true)
@@ -122,6 +146,69 @@ function App() {
     }
   }
 
+  function openCreateGroupModal() {
+    setGroupForm(emptyGroupForm)
+    setGroupModalOpen(true)
+  }
+
+  function openEditGroupModal(group: Group) {
+    setGroupForm({
+      id: group.id,
+      name: group.name,
+      note: group.note,
+      advertiserIdsText: group.advertiserIds.join('\n'),
+    })
+    setGroupModalOpen(true)
+  }
+
+  async function saveGroup() {
+    setError(null)
+
+    const payload = {
+      name: groupForm.name,
+      note: groupForm.note,
+      advertiserIds: groupForm.advertiserIdsText,
+    }
+
+    const isEditing = Boolean(groupForm.id)
+    const url = isEditing ? `${backendBaseUrl}/api/groups/${groupForm.id}` : `${backendBaseUrl}/api/groups`
+    const method = isEditing ? 'PUT' : 'POST'
+
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      const json = await response.json()
+      if (!response.ok) {
+        throw new Error(json.message || '保存分组失败')
+      }
+
+      await loadGroups()
+      setGroupModalOpen(false)
+      setGroupForm(emptyGroupForm)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存分组失败')
+    }
+  }
+
+  async function deleteGroup(groupId: string) {
+    setError(null)
+
+    try {
+      await fetch(`${backendBaseUrl}/api/groups/${groupId}`, {
+        method: 'DELETE',
+      })
+      await loadGroups()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除分组失败')
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -146,17 +233,22 @@ function App() {
         <aside className="panel sidebar-left">
           <div className="panel-header">
             <h2>对比组</h2>
-            <button className="ghost small">新建组</button>
+            <button className="ghost small" onClick={openCreateGroupModal}>新建组</button>
           </div>
           <div className="group-list">
+            {groupsLoading ? <div className="muted">正在加载分组...</div> : null}
             {groups.map((group) => (
               <div key={group.id} className="group-card">
                 <div className="group-card-top">
                   <strong>{group.name}</strong>
-                  <span className="badge">{group.type}</span>
+                  <span className="badge">manual</span>
                 </div>
-                <div className="muted">{group.note}</div>
-                <div className="group-meta">{group.accounts} 个账户</div>
+                <div className="muted">{group.note || '无备注'}</div>
+                <div className="group-meta">{group.advertiserIds.length} 个 advertiser_id</div>
+                <div className="group-actions">
+                  <button className="ghost small" onClick={() => openEditGroupModal(group)}>编辑</button>
+                  <button className="ghost small danger" onClick={() => void deleteGroup(group.id)}>删除</button>
+                </div>
               </div>
             ))}
           </div>
@@ -183,7 +275,7 @@ function App() {
               比较 A组 和 B组 最近 7 天日本市场的渠道表现，重点看消耗、CTR、新增和 ROI1。
             </div>
             <div className="message assistant">
-              现在页面已经支持从当前访问主机自动请求 backend。你本机访问会打本机 8787；同事在局域网通过你的 IP 访问时，也会自动打到你这台机器的 8787。
+              现在页面已经支持从当前访问主机自动请求 backend。对比组也支持新建、编辑和删除，第一版先以 advertiser_id 列表为核心对象。
             </div>
           </div>
 
@@ -272,6 +364,51 @@ function App() {
           </div>
         </aside>
       </main>
+
+      {groupModalOpen ? (
+        <div className="modal-backdrop" onClick={() => setGroupModalOpen(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header">
+              <h2>{groupForm.id ? '编辑对比组' : '新建对比组'}</h2>
+              <button className="ghost small" onClick={() => setGroupModalOpen(false)}>关闭</button>
+            </div>
+
+            <div className="form-grid">
+              <label className="field">
+                <span>组名称</span>
+                <input
+                  value={groupForm.name}
+                  onChange={(event) => setGroupForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="例如：A组 / 日本 Meta 测试组"
+                />
+              </label>
+
+              <label className="field">
+                <span>备注</span>
+                <input
+                  value={groupForm.note}
+                  onChange={(event) => setGroupForm((current) => ({ ...current, note: event.target.value }))}
+                  placeholder="可选备注"
+                />
+              </label>
+
+              <label className="field full-width">
+                <span>advertiser_id 列表</span>
+                <textarea
+                  value={groupForm.advertiserIdsText}
+                  onChange={(event) => setGroupForm((current) => ({ ...current, advertiserIdsText: event.target.value }))}
+                  placeholder="每行一个 advertiser_id，或用逗号分隔"
+                />
+              </label>
+            </div>
+
+            <div className="modal-actions">
+              <button className="ghost" onClick={() => setGroupModalOpen(false)}>取消</button>
+              <button className="primary" onClick={() => void saveGroup()}>保存分组</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
