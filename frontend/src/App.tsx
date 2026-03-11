@@ -1,3 +1,5 @@
+import { useMemo, useState } from 'react'
+
 type Group = {
   id: string
   name: string
@@ -11,6 +13,28 @@ type Insight = {
   detail: string
 }
 
+type ReportColumn = {
+  key: string
+  label: string
+}
+
+type ReportRow = {
+  dimensionLabel: string
+  [key: string]: unknown
+}
+
+type ReportResponse = {
+  meta: {
+    endpoint: string
+    body: Record<string, unknown>
+    total: number
+    page: number
+  }
+  columns: ReportColumn[]
+  rows: ReportRow[]
+  totals: Record<string, unknown>
+}
+
 const groups: Group[] = [
   { id: 'grp-a', name: 'A组', type: 'rule', accounts: 18, note: '日本 / Meta / 项目A' },
   { id: 'grp-b', name: 'B组', type: 'hybrid', accounts: 22, note: '日本 / 广点通 / 项目A + 手工调整' },
@@ -22,13 +46,75 @@ const insights: Insight[] = [
   { title: '可继续下钻素材维度', detail: '建议查看 CTR 前 20 素材与高消耗低转化素材。' },
 ]
 
-const rows = [
-  { channel: 'Meta', cost: '1,280,000', ctr: '2.83%', newUser: '12,430', roi1: '1.92' },
-  { channel: '广点通', cost: '980,000', ctr: '2.15%', newUser: '9,210', roi1: '1.36' },
-  { channel: '快手', cost: '420,000', ctr: '3.21%', newUser: '2,140', roi1: '1.08' },
+const fallbackColumns: ReportColumn[] = [
+  { key: 'dimensionLabel', label: '维度' },
+  { key: 'cost', label: '消耗' },
+  { key: 'ctr', label: 'CTR' },
+  { key: 'new_user', label: '新增' },
+  { key: 'roi1', label: 'ROI1' },
 ]
 
+const fallbackRows: ReportRow[] = [
+  { dimensionLabel: 'Meta', cost: '1,280,000', ctr: '2.83%', new_user: '12,430', roi1: '1.92' },
+  { dimensionLabel: '广点通', cost: '980,000', ctr: '2.15%', new_user: '9,210', roi1: '1.36' },
+  { dimensionLabel: '快手', cost: '420,000', ctr: '3.21%', new_user: '2,140', roi1: '1.08' },
+]
+
+function formatCell(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'number') {
+    return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+  }
+  return String(value)
+}
+
 function App() {
+  const [report, setReport] = useState<ReportResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const columns = useMemo(() => report?.columns ?? fallbackColumns, [report])
+  const rows = useMemo(() => report?.rows ?? fallbackRows, [report])
+
+  async function loadRealData() {
+    setLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch('/api/report/platform', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          endpoint: 'platform',
+          body: {
+            page: 1,
+            page_size: 10,
+            start_date: '2026-03-11',
+            end_date: '2026-03-11',
+            order_by: 'cost',
+            order_type: 'desc',
+            dimension: 5,
+            income_type: 2,
+            column_list: ['cost', 'click', 'ctr', 'new_user', 'roi1'],
+          },
+        }),
+      })
+
+      const json = await response.json()
+      if (!response.ok) {
+        throw new Error(json.message || '查询失败')
+      }
+
+      setReport(json)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '未知错误')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -44,9 +130,9 @@ function App() {
 
       <section className="context-strip">
         <div className="context-card"><span>项目</span><strong>项目A</strong></div>
-        <div className="context-card"><span>时间范围</span><strong>最近 7 天</strong></div>
-        <div className="context-card"><span>维度</span><strong>渠道</strong></div>
-        <div className="context-card"><span>指标</span><strong>消耗 / CTR / 新增 / ROI1</strong></div>
+        <div className="context-card"><span>时间范围</span><strong>2026-03-11</strong></div>
+        <div className="context-card"><span>维度</span><strong>平台/渠道</strong></div>
+        <div className="context-card"><span>指标</span><strong>消耗 / 点击 / CTR / 新增 / ROI1</strong></div>
       </section>
 
       <main className="workspace-grid">
@@ -90,7 +176,7 @@ function App() {
               比较 A组 和 B组 最近 7 天日本市场的渠道表现，重点看消耗、CTR、新增和 ROI1。
             </div>
             <div className="message assistant">
-              我已识别本次分析条件：项目A、最近 7 天、日本市场、渠道维度、A/B 组对比。接下来会先查询渠道报表，再进入差异分析。
+              现在前端已接入第一条真实查询链路。你可以点击“加载真实数据”验证 query-channel-report → ad-manager-api → 前端表格是否打通。
             </div>
           </div>
 
@@ -104,10 +190,15 @@ function App() {
             </ol>
           </div>
 
-          <div className="composer">
+          <div className="composer actions-row">
             <input value="帮我继续下钻，看下素材维度 Top 20" readOnly />
+            <button className="ghost" onClick={loadRealData} disabled={loading}>
+              {loading ? '加载中...' : '加载真实数据'}
+            </button>
             <button className="primary">发送</button>
           </div>
+
+          {error ? <div className="error-banner">{error}</div> : null}
         </section>
 
         <aside className="panel sidebar-right">
@@ -127,26 +218,30 @@ function App() {
             <table>
               <thead>
                 <tr>
-                  <th>渠道</th>
-                  <th>消耗</th>
-                  <th>CTR</th>
-                  <th>新增</th>
-                  <th>ROI1</th>
+                  {columns.map((column) => (
+                    <th key={column.key}>{column.label}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr key={row.channel}>
-                    <td>{row.channel}</td>
-                    <td>{row.cost}</td>
-                    <td>{row.ctr}</td>
-                    <td>{row.newUser}</td>
-                    <td>{row.roi1}</td>
+                {rows.map((row, index) => (
+                  <tr key={`${row.dimensionLabel}-${index}`}>
+                    {columns.map((column) => (
+                      <td key={column.key}>{formatCell(row[column.key])}</td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {report ? (
+            <div className="panel-section totals-card">
+              <h3>本次真实查询</h3>
+              <div className="muted">端点：{report.meta.endpoint}</div>
+              <div className="muted">总条数：{report.meta.total}</div>
+            </div>
+          ) : null}
 
           <div className="panel-section">
             <h3>关键发现</h3>
