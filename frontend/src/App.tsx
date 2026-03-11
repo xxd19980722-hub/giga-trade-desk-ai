@@ -46,6 +46,32 @@ type GroupedReportItem = {
   mappingNote?: string
 }
 
+type AdAnomaly = {
+  adId: string
+  adName: string
+  anomalyType: string
+  priority: 'P1' | 'P2' | 'P3'
+  reason: string
+  metrics: {
+    cost: number
+    click: number
+    ctr: number
+    new_user: number
+    roi1: number
+  }
+}
+
+type GroupedAnomalyItem = {
+  group: {
+    id: string
+    name: string
+    advertiserIds: string[]
+  }
+  anomalies: AdAnomaly[]
+  scannedAds: number
+  mappingNote?: string
+}
+
 type QueryIntent = {
   matchedGroups: Group[]
   dateRangeLabel: string
@@ -54,6 +80,7 @@ type QueryIntent = {
   metrics: string[]
   dimensionLabel: string
   orderBy: string
+  analysisMode: 'report' | 'ad-anomalies'
 }
 
 const insights: Insight[] = [
@@ -106,6 +133,19 @@ function addDays(base: Date, offset: number) {
   return next
 }
 
+function anomalyTypeLabel(type: string) {
+  switch (type) {
+    case 'high_cost_low_return':
+      return '高消耗低回报'
+    case 'high_click_low_new_user':
+      return '高点击低新增'
+    case 'low_cost_high_potential':
+      return '低消耗高潜力'
+    default:
+      return type
+  }
+}
+
 function inferIntent(text: string, groups: Group[]): QueryIntent {
   const today = new Date()
   const lower = text.toLowerCase()
@@ -151,10 +191,14 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
   const matchedGroups = groups.filter((group) => text.includes(group.name))
 
   let dimensionLabel = '平台/渠道'
-  if (text.includes('素材')) {
+  let analysisMode: 'report' | 'ad-anomalies' = 'report'
+  if (text.includes('广告') && (text.includes('异常') || text.includes('高消耗') || text.includes('低新增'))) {
+    dimensionLabel = '广告异常扫描'
+    analysisMode = 'ad-anomalies'
+  } else if (text.includes('素材')) {
     dimensionLabel = '素材（待接入）'
   } else if (text.includes('广告')) {
-    dimensionLabel = '广告（待接入）'
+    dimensionLabel = '广告维度'
   }
 
   const orderBy = finalMetrics.includes('cost') ? 'cost' : finalMetrics[0]
@@ -167,15 +211,17 @@ function inferIntent(text: string, groups: Group[]): QueryIntent {
     metrics: finalMetrics,
     dimensionLabel,
     orderBy,
+    analysisMode,
   }
 }
 
 function App() {
   const [report, setReport] = useState<ReportResponse | null>(null)
   const [groupedReports, setGroupedReports] = useState<GroupedReportItem[]>([])
+  const [groupedAnomalies, setGroupedAnomalies] = useState<GroupedAnomalyItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [draft, setDraft] = useState('查询 A组 和 B组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。')
+  const [draft, setDraft] = useState('观察 A组 和 B组 最近7天 广告是否有异常，比如高消耗低回报或高点击低新增。')
   const [groups, setGroups] = useState<Group[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
   const [groupModalOpen, setGroupModalOpen] = useState(false)
@@ -210,6 +256,40 @@ function App() {
     setError(null)
 
     try {
+      if (currentIntent.analysisMode === 'ad-anomalies' && currentIntent.matchedGroups.length > 0) {
+        const response = await fetch(`${backendBaseUrl}/api/analysis/ad-anomalies`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            endpoint: 'platform',
+            groupIds: currentIntent.matchedGroups.map((group) => group.id),
+            body: {
+              page: 1,
+              page_size: 50,
+              start_date: currentIntent.startDate,
+              end_date: currentIntent.endDate,
+              order_by: currentIntent.orderBy,
+              order_type: 'desc',
+              dimension: 10,
+              income_type: 2,
+              column_list: currentIntent.metrics,
+            },
+          }),
+        })
+
+        const json = await response.json()
+        if (!response.ok) {
+          throw new Error(json.message || '广告异常扫描失败')
+        }
+
+        setGroupedAnomalies(json.grouped ?? [])
+        setGroupedReports([])
+        setReport(null)
+        return
+      }
+
       if (currentIntent.matchedGroups.length > 0) {
         const response = await fetch(`${backendBaseUrl}/api/report/grouped`, {
           method: 'POST',
@@ -240,6 +320,7 @@ function App() {
 
         const items = (json.grouped ?? []) as GroupedReportItem[]
         setGroupedReports(items)
+        setGroupedAnomalies([])
         setReport(items[0]?.report ?? null)
         return
       }
@@ -271,6 +352,7 @@ function App() {
       }
 
       setGroupedReports([])
+      setGroupedAnomalies([])
       setReport(json)
     } catch (err) {
       setError(err instanceof Error ? err.message : '未知错误')
@@ -394,9 +476,9 @@ function App() {
           <div className="panel-section">
             <h3>常用分析</h3>
             <ul className="shortcut-list">
+              <li>观察 A组 和 B组 最近7天 广告是否有异常</li>
               <li>查询 A组 今天渠道表现</li>
               <li>查询 B组 最近7天 渠道表现</li>
-              <li>查询 A组 最近14天 消耗、CTR、ROI1</li>
               <li>查询 A组 和 B组 最近7天 表现</li>
             </ul>
           </div>
@@ -405,13 +487,13 @@ function App() {
         <section className="panel center-panel">
           <div className="panel-header">
             <h2>AI 对话</h2>
-            <span className="status">分组多次查询已接入</span>
+            <span className="status">广告异常扫描已接入</span>
           </div>
 
           <div className="chat-thread">
             <div className="message user">{draft}</div>
             <div className="message assistant">
-              现在如果命中了多个组，会按组分别发起查询，然后在右侧按组展示结果。当前版本采用 advertiserIds → account_id_list 的临时桥接方式。
+              现在已经支持广告异常扫描。若命中多个组，会按组分别查询广告维度，并识别高消耗低回报、高点击低新增、低消耗高潜力三类异常。
             </div>
           </div>
 
@@ -422,7 +504,7 @@ function App() {
                 <div><span>命中分组</span><strong>{lastIntent.matchedGroups.map((group) => group.name).join('、') || '未命中，默认全量'}</strong></div>
                 <div><span>时间范围</span><strong>{lastIntent.dateRangeLabel}</strong></div>
                 <div><span>查询维度</span><strong>{lastIntent.dimensionLabel}</strong></div>
-                <div><span>指标</span><strong>{lastIntent.metrics.join(', ')}</strong></div>
+                <div><span>模式</span><strong>{lastIntent.analysisMode === 'ad-anomalies' ? '广告异常扫描' : '报表查询'}</strong></div>
               </div>
             </div>
           ) : null}
@@ -430,10 +512,10 @@ function App() {
           <div className="plan-card">
             <h3>当前执行计划</h3>
             <ol>
-              <li>识别输入中的组名、时间范围、指标</li>
-              <li>若命中多个组，则按组分别发起查询</li>
-              <li>将每个组的结果独立展示</li>
-              <li>后续再补真正的对比分析层</li>
+              <li>识别输入中的组名、时间范围、指标和分析模式</li>
+              <li>若是广告异常扫描，则按组查询广告维度</li>
+              <li>对每组广告做规则型异常识别</li>
+              <li>将异常广告列表展示到右侧</li>
             </ol>
           </div>
 
@@ -441,7 +523,7 @@ function App() {
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="例如：查询 A组 和 B组 最近7天 渠道表现，重点看消耗、点击、CTR、新增和 ROI1。"
+              placeholder="例如：观察 A组 和 B组 最近7天 广告是否有异常，比如高消耗低回报或高点击低新增。"
             />
             <div className="composer-toolbar">
               <div className="muted small-note">当前后端地址：{backendBaseUrl}</div>
@@ -463,7 +545,43 @@ function App() {
             <button className="ghost small">导出</button>
           </div>
 
-          {groupedReports.length > 0 ? (
+          {groupedAnomalies.length > 0 ? (
+            <div className="grouped-results">
+              {groupedAnomalies.map((item) => (
+                <div className="group-result-card" key={item.group.id}>
+                  <div className="group-result-header">
+                    <div>
+                      <h3>{item.group.name}</h3>
+                      <div className="muted">扫描广告数：{item.scannedAds}</div>
+                    </div>
+                  </div>
+
+                  {item.mappingNote ? <div className="mapping-note">{item.mappingNote}</div> : null}
+
+                  <div className="anomaly-list">
+                    {item.anomalies.length === 0 ? <div className="muted">未识别到明显异常广告。</div> : null}
+                    {item.anomalies.map((anomaly) => (
+                      <div className="anomaly-card" key={`${item.group.id}-${anomaly.adId}-${anomaly.anomalyType}`}>
+                        <div className="anomaly-head">
+                          <strong>{anomaly.adName}</strong>
+                          <span className={`priority ${anomaly.priority.toLowerCase()}`}>{anomaly.priority}</span>
+                        </div>
+                        <div className="anomaly-type">{anomalyTypeLabel(anomaly.anomalyType)}</div>
+                        <div className="muted">{anomaly.reason}</div>
+                        <div className="anomaly-metrics">
+                          <span>消耗：{formatCell(anomaly.metrics.cost)}</span>
+                          <span>点击：{formatCell(anomaly.metrics.click)}</span>
+                          <span>CTR：{formatCell(anomaly.metrics.ctr)}</span>
+                          <span>新增：{formatCell(anomaly.metrics.new_user)}</span>
+                          <span>ROI1：{formatCell(anomaly.metrics.roi1)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : groupedReports.length > 0 ? (
             <div className="grouped-results">
               {groupedReports.map((item) => (
                 <div className="group-result-card" key={item.group.id}>

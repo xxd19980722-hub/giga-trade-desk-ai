@@ -177,6 +177,79 @@ async function runPlatformReport(parsed) {
   }
 }
 
+function percentileThreshold(values, percentile) {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const index = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * percentile)))
+  return sorted[index]
+}
+
+function analyzeAdAnomalies(rows = []) {
+  const cleanRows = rows.filter((row) => typeof row.cost === 'number')
+  if (cleanRows.length === 0) return []
+
+  const costP70 = percentileThreshold(cleanRows.map((row) => Number(row.cost || 0)), 0.7)
+  const roiP30 = percentileThreshold(cleanRows.map((row) => Number(row.roi1 || 0)), 0.3)
+  const newUserP30 = percentileThreshold(cleanRows.map((row) => Number(row.new_user || 0)), 0.3)
+  const clickP70 = percentileThreshold(cleanRows.map((row) => Number(row.click || 0)), 0.7)
+  const ctrP70 = percentileThreshold(cleanRows.map((row) => Number(row.ctr || 0)), 0.7)
+  const roiP80 = percentileThreshold(cleanRows.map((row) => Number(row.roi1 || 0)), 0.8)
+  const newUserP80 = percentileThreshold(cleanRows.map((row) => Number(row.new_user || 0)), 0.8)
+  const costP50 = percentileThreshold(cleanRows.map((row) => Number(row.cost || 0)), 0.5)
+
+  const anomalies = []
+
+  for (const row of cleanRows) {
+    const cost = Number(row.cost || 0)
+    const click = Number(row.click || 0)
+    const ctr = Number(row.ctr || 0)
+    const newUser = Number(row.new_user || 0)
+    const roi1 = Number(row.roi1 || 0)
+    const adName = row.raw?.ad_name || row.dimensionLabel || '未知广告'
+    const adId = row.raw?.ad_id || '-'
+
+    if (cost >= costP70 && (roi1 <= roiP30 || newUser <= newUserP30)) {
+      anomalies.push({
+        adId,
+        adName,
+        anomalyType: 'high_cost_low_return',
+        priority: 'P1',
+        reason: '消耗处于组内前30%，但 ROI1 或新增落在组内后30%。',
+        metrics: { cost, click, ctr, new_user: newUser, roi1 },
+      })
+      continue
+    }
+
+    if ((click >= clickP70 || ctr >= ctrP70) && newUser <= newUserP30) {
+      anomalies.push({
+        adId,
+        adName,
+        anomalyType: 'high_click_low_new_user',
+        priority: 'P2',
+        reason: '点击或 CTR 较高，但新增落在组内后30%。',
+        metrics: { cost, click, ctr, new_user: newUser, roi1 },
+      })
+      continue
+    }
+
+    if (cost <= costP50 && (roi1 >= roiP80 || newUser >= newUserP80)) {
+      anomalies.push({
+        adId,
+        adName,
+        anomalyType: 'low_cost_high_potential',
+        priority: 'P3',
+        reason: '消耗较低，但 ROI1 或新增进入组内前20%。',
+        metrics: { cost, click, ctr, new_user: newUser, roi1 },
+      })
+    }
+  }
+
+  const priorityOrder = { P1: 1, P2: 2, P3: 3 }
+  return anomalies
+    .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || b.metrics.cost - a.metrics.cost)
+    .slice(0, 10)
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -313,6 +386,60 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: 'grouped_query_failed',
+        message: error.message,
+      })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && req.url === '/api/analysis/ad-anomalies') {
+    try {
+      const parsed = await parseRequestBody(req)
+      const groups = await readGroups()
+      const groupIds = Array.isArray(parsed.groupIds) ? parsed.groupIds : []
+      const targetGroups = groups.filter((group) => groupIds.includes(group.id))
+      const baseBody = parsed.body || {
+        ...defaultReportBody(),
+        dimension: 10,
+        page_size: 50,
+        column_list: ['cost', 'click', 'ctr', 'new_user', 'roi1'],
+      }
+
+      const results = []
+      for (const group of targetGroups) {
+        const report = await runPlatformReport({
+          endpoint: parsed.endpoint || 'platform',
+          body: {
+            ...baseBody,
+            dimension: 10,
+            account_id_list: group.advertiserIds,
+          },
+        })
+
+        const anomalies = analyzeAdAnomalies(report.rows)
+        results.push({
+          group: {
+            id: group.id,
+            name: group.name,
+            advertiserIds: group.advertiserIds,
+          },
+          anomalies,
+          scannedAds: report.rows.length,
+          mappingNote: '当前版本将 advertiserIds 临时映射为 account_id_list，并在广告维度（dimension=10）下进行异常扫描。',
+        })
+      }
+
+      sendJson(res, 200, {
+        grouped: results,
+        queryMeta: {
+          endpoint: parsed.endpoint || 'platform',
+          baseBody,
+          analysisMode: 'ad_anomalies_v1',
+        },
+      })
+    } catch (error) {
+      sendJson(res, 500, {
+        error: 'ad_anomalies_failed',
         message: error.message,
       })
     }
